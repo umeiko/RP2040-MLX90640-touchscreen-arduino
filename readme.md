@@ -4,8 +4,9 @@
 
 - RP2040双核MCU + ST7789屏幕（240 * 280）物理分辨率 + CST816T 触摸IC + MLX90640热成像传感器。
 - 引出了UART1，以及 SWD 调试接口。
-- 可连接上位机图传
-- 集成卡尔曼滤波算法
+- 可连接上位机图传。
+- 集成卡尔曼滤波算法。
+![image](https://github.com/user-attachments/assets/fe6f153e-51b8-4891-8e94-cc8b2bdb17b4)
 
 ### 配置环境
 - 配置 arduino-pico环境，具体可参考[arduino-pico](https://github.com/earlephilhower/arduino-pico/tree/master)仓库。
