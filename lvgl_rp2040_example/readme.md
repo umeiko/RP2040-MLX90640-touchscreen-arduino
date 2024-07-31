@@ -1,12 +1,7 @@
-## RP2040热成像计划
+## LVGL示例
 
-电路图可以在[这里找到](https://oshwhub.com/umekoko/re-cheng-xiang_copy)
+![3a3f02000d5065bd46c5adb85640058](https://github.com/user-attachments/assets/9a445a53-78a6-4317-9958-f931e3456c1c)
 
-- RP2040双核MCU + ST7789屏幕（240 * 280）物理分辨率 + CST816T 触摸IC + MLX90640热成像传感器。
-- 引出了UART1，以及 SWD 调试接口。
-- 可连接上位机图传。
-- 集成卡尔曼滤波算法。
-![image](https://github.com/user-attachments/assets/fe6f153e-51b8-4891-8e94-cc8b2bdb17b4)
 
 ### 配置环境
 - 配置 arduino-pico环境，具体可参考[arduino-pico](https://github.com/earlephilhower/arduino-pico/tree/master)仓库。
