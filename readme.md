@@ -7,6 +7,8 @@
 - 可连接上位机图传。
 - 集成卡尔曼滤波算法。
 ![image](https://github.com/user-attachments/assets/fe6f153e-51b8-4891-8e94-cc8b2bdb17b4)
+![3a3f02000d5065bd46c5adb85640058](https://github.com/user-attachments/assets/5373e2d0-d3f9-4648-afc6-5e263d305e0c)
+
 - 提供了热成像代码，位于`thermal_app`中。
 - 提供lvgl示例代码，位于`lvgl_rp2040_example`中。
 ### 配置环境
