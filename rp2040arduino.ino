@@ -676,6 +676,7 @@ void setup1(void)
     delay(1000);
     uint8_t send_buf[4];
     unsigned long btn1_pushed_start_time =  0;
+    unsigned long btn2_pushed_start_time =  0;
     bool btn2_pushed = false;
     bool btn1_pushed = false;
    
@@ -692,14 +693,15 @@ void setup1(void)
    unsigned long touch_pushed_start_time =  0;
    bool touched = false;
    int start_br = brightness;
-    for(;power_on==true;){
-        if (digitalRead(buttonPin1) == LOW){  // 长按btn1的关机功能
+   for(;power_on==true;){
+        
+        if (BOOTSEL){  // 长按btn1的关机功能
             if (millis() - btn1_pushed_start_time >= BTN_LONG_PUSH_T){
             power_off();
             Serial1.println("power off");
             } 
             vTaskDelay(5);
-            if (digitalRead(buttonPin1) == LOW){btn1_pushed=true;}
+            if (BOOTSEL){btn1_pushed=true;}
         }else{
             btn1_pushed_start_time = millis();
             if (btn1_pushed) {  // 短按btn1
@@ -710,16 +712,21 @@ void setup1(void)
             btn1_pushed=false;
         }
 
-        if (BOOTSEL){
+        if (digitalRead(buttonPin1) == LOW){
+            if (millis() - btn2_pushed_start_time >= BTN_LONG_PUSH_T){
+               power_off();
+               Serial1.println("power off");
+            }
             vTaskDelay(5);
-            if (BOOTSEL){btn2_pushed=true;}
+            if (digitalRead(buttonPin1) == LOW){btn2_pushed=true;}
         }else{
+            btn2_pushed_start_time = millis();
             if (btn2_pushed) {freeze = !freeze; }
             btn2_pushed=false;
         }
 
-        buttonState1 = digitalRead(buttonPin1);
-        buttonState2 = BOOTSEL;
+        buttonState1 = BOOTSEL;
+        buttonState2 = digitalRead(buttonPin1);
         // vTaskDelay(100); 
     
         while (lock == true) {vTaskDelay(1);}
