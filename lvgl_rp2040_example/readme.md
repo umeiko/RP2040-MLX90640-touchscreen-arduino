@@ -7,11 +7,11 @@
 - 可连接上位机图传。
 - 集成卡尔曼滤波算法。
 ![image](https://github.com/user-attachments/assets/fe6f153e-51b8-4891-8e94-cc8b2bdb17b4)
-- 提供了热成像代码，位于`thermal_app`中。
-- 提供lvgl示例代码，位于`lvgl_rp2040_example`中。
+
 ### 配置环境
 - 配置 arduino-pico环境，具体可参考[arduino-pico](https://github.com/earlephilhower/arduino-pico/tree/master)仓库。
 - 配置好 `TFT_eSPI`屏幕驱动库，版本为`2.5.43`，具体可参考[TFT_eSPI](https://github.com/Bodmer/TFT_eSPI/tree/master)仓库。
+- 配置好 `lvgl`库，版本为`8.3.11`，具体可参考[lvgl](https://github.com/lvgl/lvgl)仓库。
 - 将`C:\Users\*你自己的名字*\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h`中替换成以下内容：
 
     ```C
@@ -45,6 +45,7 @@
     #define SPI_FREQUENCY  40000000
     #define SUPPORT_TRANSACTIONS
     ```
+- 将`lv_conf.h`复制到`C:\Users\*你自己的名字*\Documents\Arduino\libraries\`中：
 - 直接编译上传即可。
 
 ## 有问题发ISSUE
