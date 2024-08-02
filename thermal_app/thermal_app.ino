@@ -77,7 +77,7 @@ static uint16_t heat_bitmap[32*_SCALE * 24*_SCALE] = {}; // rgb56556形式的内
 #endif
 
 uint16_t test_points[5][2];
-int brightness = 128;
+int brightness = 255;
 
 int R_colour, G_colour, B_colour;            
 // int i, j;                                    
@@ -262,13 +262,13 @@ void task_mlx(void * ptr){
    Wire.begin(); 
    pinMode(MLX_VDD, OUTPUT);
    digitalWrite(MLX_VDD, LOW);
-   vTaskDelay(1000);
+   vTaskDelay(1200);
    Wire.setClock(800000); //Increase I2C clock speed to 800kHz
 
    Serial1.println("MLX90640 IR Array Example");
 
    if (isConnected() == false){
-      while (1){
+      while (isConnected() == false){
          Serial1.println("MLX90640 not detected at default I2C address. Please check wiring. Freezing.");
          vTaskDelay(1000);
          };
