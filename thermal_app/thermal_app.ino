@@ -28,6 +28,7 @@
 #include "MLX90640_I2C_Driver.h"
 #include "CST816T.h"
 #include "kalman_filter.h"
+#include "BilinearInterpolation.h"
 
 #define TA_SHIFT 8 //Default shift for MLX90640 in open air
 #define MLX_VDD  11
@@ -44,8 +45,8 @@
 
 #define SCREEN_ROTATION 1
 
-#define DRAW_BLOCKS // 使用方块来绘制热力图
-// #define DRAW_PIXELS  // 使用像素来绘制
+// #define DRAW_BLOCKS // 使用方块来绘制热力图
+#define DRAW_PIXELS  // 使用像素来绘制
 
 #define _SCALE 9
 #define BTN_LONG_PUSH_T 1000
@@ -63,11 +64,12 @@ bool buttonState2 = 1;
 
 const byte MLX90640_address = 0x33;
 static float mlx90640To[768];              // 从MLX90640读取的温度数据
-static float mlx90640To_buffer[768];       // 缓存区域，复制MLX90640读取的温度数据并用于绘制热力图
+static int mlx90640To_buffer[768];       // 缓存区域，复制MLX90640读取的温度数据并用于绘制热力图
 static float mlx90640To_send_buffer[768];  // 缓存区域，复制MLX90640读取的温度数据，用于发送到上位机
+static uint8_t* mlx90640To_Serial_buffer = (uint8_t*)mlx90640To_send_buffer;  
 
 static KFPTypeS kfpVar3Array[768];  // 卡尔曼滤波器变量数组
-static uint8_t mlx90640To_Serial_buffer[768 * 4];  // 缓存区域，复制MLX90640读取的温度数据，用于发送到上位机
+
 
 
 paramsMLX90640 mlx90640;
@@ -127,42 +129,42 @@ void getColour(int j)
        {
         R_colour = 0;
         G_colour = 0;
-        B_colour = 20 + (120.0/30.0) * j;
+        B_colour = 20 + 4 * j;
        }
     
     if (j >= 30 && j < 60)
        {
-        R_colour = (120.0 / 30) * (j - 30.0);
+        R_colour = 4 * (j - 30);
         G_colour = 0;
-        B_colour = 140 - (60.0/30.0) * (j - 30.0);
+        B_colour = 140 - 2 * (j - 30);
        }
 
     if (j >= 60 && j < 90)
        {
-        R_colour = 120 + (135.0/30.0) * (j - 60.0);
+        R_colour = 120 + 4 * (j - 60);
         G_colour = 0;
-        B_colour = 80 - (70.0/30.0) * (j - 60.0);
+        B_colour = 80 - 2 * (j - 60);
        }
 
     if (j >= 90 && j < 120)
        {
         R_colour = 255;
-        G_colour = 0 + (60.0/30.0) * (j - 90.0);
-        B_colour = 10 - (10.0/30.0) * (j - 90.0);
+        G_colour = 0 + 2 * (j - 90);
+        B_colour = 10 - (j - 90) / 3;
        }
 
     if (j >= 120 && j < 150)
        {
         R_colour = 255;
-        G_colour = 60 + (175.0/30.0) * (j - 120.0);
+        G_colour = 60 + 175 * (j - 120) / 30;
         B_colour = 0;
        }
 
     if (j >= 150 && j <= 180)
        {
         R_colour = 255;
-        G_colour = 235 + (20.0/30.0) * (j - 150.0);
-        B_colour = 0 + 255.0/30.0 * (j - 150.0);
+        G_colour = 235 + (j - 150) * 20 / 30;
+        B_colour = 0 + 85 * (j - 150) / 10;
        }
 }
 
@@ -239,9 +241,20 @@ void update_bitmap(bool re_mapcolor=true){
          int id = (23-y) * 32 + x;
          if (re_mapcolor) {mlx90640To_buffer[id] = 180.0 * (mlx90640To_buffer[id] - T_min) / (T_max - T_min);}
          getColour(mlx90640To_buffer[id]);
-         draw_block_bitmap(x*_SCALE, y*_SCALE, _SCALE, 32*_SCALE, 24*_SCALE, tft.color565(B_colour, R_colour, G_colour), heat_bitmap);
-         // draw_block_bitmap(x*_SCALE, y*_SCALE, _SCALE, 32*_SCALE, 24*_SCALE, tft.color565(R_colour, G_colour, B_colour), heat_bitmap);
+         // draw_block_bitmap(x*_SCALE, y*_SCALE, _SCALE, 32*_SCALE, 24*_SCALE, tft.color565(255, 0, 0), heat_bitmap);
+         draw_block_bitmap(x*_SCALE, y*_SCALE, _SCALE, 32*_SCALE, 24*_SCALE, tft.color565(R_colour, G_colour, B_colour), heat_bitmap);
       } 
+   }
+}
+
+void update_bitmap_bio_linear(){
+   float value;
+   for(int y=0; y<24 * _SCALE; y++){ 
+      for(int x=0; x<32 * _SCALE; x++){
+         value = bio_linear_interpolation(x, y, mlx90640To_buffer);
+         getColour(value);
+         heat_bitmap[y * 32 * _SCALE + x] = tft.color565(R_colour, G_colour, B_colour);
+      }
    }
 }
 
@@ -249,7 +262,9 @@ void update_bitmap(bool re_mapcolor=true){
 void draw_heat_image(bool re_mapcolor=true){
    // tft.setRotation(3);
    tft.setRotation(SCREEN_ROTATION);
-   update_bitmap(re_mapcolor);
+   if(re_mapcolor){
+      update_bitmap_bio_linear();
+   }
    tft.pushImage(0, 0, 32*_SCALE, 24*_SCALE, heat_bitmap);
 }
 #endif
@@ -552,7 +567,7 @@ void task_screen_draw(void * ptr){
    // tft.setBitmapColor(16);
    for(;power_on==true;){
       // 这么做是预防touch和spi总线发生冲突
-      if (!touch_updated){touch.update(); touch_updated=true;}
+      // if (!touch_updated){touch.update(); touch_updated=true;}
 
     //   // read the state of the pushbutton value:
     //   buttonState1 = digitalRead(buttonPin1);
@@ -564,8 +579,10 @@ void task_screen_draw(void * ptr){
             // 阻塞画面
             vTaskDelay(1);
          }
-         // for (int i = 0; i < 768; i++) {mlx90640To_buffer[i] = mlx90640To[i];}  // 拷贝温度信息
-         memcpy(mlx90640To_buffer, mlx90640To, 768 * sizeof(float));
+         for (int i = 0; i < 768; i++) {
+            // mlx90640To_buffer[i] = mlx90640To[i];
+            mlx90640To_buffer[i] = (int)(180.0 * (mlx90640To[i] - T_min) / (T_max - T_min));
+         }  // 拷贝温度信息
          draw_heat_image();
          
       }
@@ -606,7 +623,7 @@ void send_float_as_uint8(float f, uint8_t *buf) {
 
 // 通过串口把整个温度数据矩阵传输
 void send_to_serial() {
-   memcpy(mlx90640To_Serial_buffer, mlx90640To_send_buffer, 768 * sizeof(float));
+   // memcpy(mlx90640To_Serial_buffer, mlx90640To_send_buffer, 768 * sizeof(float));
    Serial.write(mlx90640To_Serial_buffer, 768 * sizeof(float));
 }
 
@@ -653,7 +670,8 @@ void setup(void)
     xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 5, NULL, 1, NULL);
    //  xTaskCreate(task_bat, "BAT_MANAGER", 1024 * 2, NULL, 3, NULL);
     tft.init();
-    xTaskCreate(task_screen_draw, "SCREEN", 1024 * 5, NULL, 3, NULL);
+    tft.setSwapBytes(true);
+    xTaskCreate(task_screen_draw, "SCREEN", 1024 * 8, NULL, 3, NULL);
     xTaskCreate(task_smooth_on, "SMOOTH_ON", 1024, NULL, 2, NULL);
    //  xTaskCreate(task_button,    "BUTTON", 1024 * 2, NULL, 3, NULL);
    //  xTaskCreate(task_touchpad,  "TOUCHPAD", 1024 * 4, NULL, 1, NULL);
@@ -738,7 +756,7 @@ void setup1(void)
         send_float_as_uint8(T_avg, send_buf);
         send_to_serial();
         Serial.print("END");
-        vTaskDelay(30);
+      //   vTaskDelay(30);
 
         if(xStartTime + xWait > xTaskGetTickCount()){
          adc_value = analogRead(BAT_ADC);
@@ -746,6 +764,7 @@ void setup1(void)
          xStartTime = xTaskGetTickCount();
         }
 
+        if (!touch_updated){touch.update(); touch_updated=true;}
         if (touch_updated) {
          if( touch.tp.touching )
          {
@@ -776,8 +795,8 @@ void setup1(void)
          // Serial.printf("touch: %d %d\n", touched, touch.tp.touching);
          touched = touch.tp.touching;
          touch_updated = false;
-      }
-
+      } 
+     vTaskDelay(1);
     }
     vTaskDelete(NULL);
 }
