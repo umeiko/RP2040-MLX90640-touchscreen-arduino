@@ -46,7 +46,34 @@
 #define SCREEN_ROTATION 1
 
 // #define DRAW_BLOCKS // 使用方块来绘制热力图
-#define DRAW_PIXELS  // 使用像素来绘制
+// #define DRAW_PIXELS  // 使用像素来绘制
+#define DRAW_PIXELS_DMA  // 使用DMA来绘制
+
+// #define KALMAN  // 使用 卡尔曼滤波器
+// #define SERIAL1_DEBUG  
+
+
+#if defined(KALMAN)
+#include "kalman_filter.h"
+const static float init_P = 0.1;
+const static float init_G = 0.0;
+const static float init_O = 26;
+
+static KFPTypeS kfpVar3Array[768];  // 卡尔曼滤波器变量数组
+// 初始化卡尔曼滤波器数组的函数
+void KalmanArrayInit() {
+    // 循环遍历数组中的每个元素
+    for (int i = 0; i < 768; ++i) {
+        // 初始化每个元素
+        kfpVar3Array[i] = (KFPTypeS){
+         init_P,     //估算协方差. 初始化值为 0.02
+         init_G,     //卡尔曼增益. 初始化值为 0
+         init_O    //卡尔曼滤波器输出. 初始化值为 0
+        };
+    }
+}
+
+#endif
 
 #define _SCALE 9
 #define BTN_LONG_PUSH_T 1000
@@ -67,8 +94,6 @@ static float mlx90640To[768];              // 从MLX90640读取的温度数据
 static int mlx90640To_buffer[768];       // 缓存区域，复制MLX90640读取的温度数据并用于绘制热力图
 static float mlx90640To_send_buffer[768];  // 缓存区域，复制MLX90640读取的温度数据，用于发送到上位机
 static uint8_t* mlx90640To_Serial_buffer = (uint8_t*)mlx90640To_send_buffer;  
-
-static KFPTypeS kfpVar3Array[768];  // 卡尔曼滤波器变量数组
 
 
 
@@ -92,6 +117,7 @@ float bat_v;
 bool lock = false;  // 简单的锁，防止拷贝温度数据的时候对内存的访问冲突
 bool serial_cp_lock = false;  // 简单的锁，防止拷贝温度数据的时候对内存的访问冲突
 bool touch_updated = false;
+bool mlx_is_connected = false;
 
 bool power_on = true;  // 是否开机
 bool freeze = false;  // 暂停画面
@@ -102,23 +128,6 @@ TFT_eSPI tft = TFT_eSPI();
 CST816T touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, -1);	// sda, scl, rst, irq
 
 int diffx, diffy;
-const static float init_P = 0.1;
-const static float init_G = 0.0;
-const static float init_O = 26;
-
-
-// 初始化卡尔曼滤波器数组的函数
-void KalmanArrayInit() {
-    // 循环遍历数组中的每个元素
-    for (int i = 0; i < 768; ++i) {
-        // 初始化每个元素
-        kfpVar3Array[i] = (KFPTypeS){
-         init_P,     //估算协方差. 初始化值为 0.02
-         init_G,     //卡尔曼增益. 初始化值为 0
-         init_O    //卡尔曼滤波器输出. 初始化值为 0
-        };
-    }
-}
 
 // ===============================
 // ===== determine the colour ====
@@ -248,7 +257,7 @@ void update_bitmap(bool re_mapcolor=true){
 }
 
 void update_bitmap_bio_linear(){
-   float value;
+   int value;
    for(int y=0; y<24 * _SCALE; y++){ 
       for(int x=0; x<32 * _SCALE; x++){
          value = bio_linear_interpolation(x, y, mlx90640To_buffer);
@@ -269,31 +278,70 @@ void draw_heat_image(bool re_mapcolor=true){
 }
 #endif
 
+#if defined(DRAW_PIXELS_DMA)
+const int lines = 25;
+uint16_t  lineBuffer[32 * _SCALE * lines]; // Toggle buffer for lines
+uint16_t  dmaBuffer1[32 * _SCALE * lines]; // Toggle buffer for lines
+uint16_t  dmaBuffer2[32 * _SCALE * lines]; // Toggle buffer for lines
+uint16_t* dmaBufferPtr = dmaBuffer1;
+bool dmaBufferSel = 0;
+// 在屏幕上绘制热力图
+void draw_heat_image(bool re_mapcolor=true){  
+   static int value;
+   static int now_y = 0;
+   tft.setRotation(SCREEN_ROTATION);
+   tft.startWrite();
+   for(int y=0; y<24 * _SCALE; y++){ 
+      for(int x=0; x<32 * _SCALE; x++){
+         value = bio_linear_interpolation(x, y, mlx90640To_buffer);
+         getColour(value);
+         lineBuffer[x + now_y*32 * _SCALE] = tft.color565(R_colour, G_colour, B_colour);
+      }
+      now_y ++;
+      if(now_y==lines){
+         if (dmaBufferSel) dmaBufferPtr = dmaBuffer2;
+         else dmaBufferPtr = dmaBuffer1;
+         dmaBufferSel = !dmaBufferSel; // Toggle buffer selection
+         // tft.startWrite();
+         tft.pushImageDMA(0, y-now_y, 32*_SCALE, lines, lineBuffer, dmaBufferPtr);
+         // tft.endWrite();
+         now_y = 0;
+      }
+   }if(now_y!=0){
+      if (dmaBufferSel) dmaBufferPtr = dmaBuffer2;
+      else dmaBufferPtr = dmaBuffer1;
+      dmaBufferSel = !dmaBufferSel; // Toggle buffer selection
+      // tft.startWrite();
+      tft.pushImageDMA(0, 24*_SCALE-1-now_y, 32*_SCALE, now_y, lineBuffer, dmaBufferPtr);
+      // tft.endWrite();
+      now_y = 0;
+   }
+   tft.endWrite();
+}
+#endif
 
-// 热成像读取多任务
-void task_mlx(void * ptr){
+int status;
+uint16_t eeMLX90640[832];
+int mlx_setup(){
+   pinMode(MLX_VDD, OUTPUT);
+   digitalWrite(MLX_VDD, LOW);
    Wire.setSDA(MLX_SDA);
    Wire.setSCL(MLX_SCL);
    Wire.begin(); 
-   pinMode(MLX_VDD, OUTPUT);
-   digitalWrite(MLX_VDD, LOW);
-   vTaskDelay(1200);
+   vTaskDelay(500);
    Wire.setClock(800000); //Increase I2C clock speed to 800kHz
-
    Serial1.println("MLX90640 IR Array Example");
-
-   if (isConnected() == false){
-      while (isConnected() == false){
-         Serial1.println("MLX90640 not detected at default I2C address. Please check wiring. Freezing.");
-         vTaskDelay(1000);
-         };
-   }Serial1.println("MLX90640 online!");
-   int status;
-   uint16_t eeMLX90640[832];
-      
+   mlx_is_connected = isConnected();
+   if (mlx_is_connected == false){
+      // while(!isConnected()){
+         Serial1.println("MLX90640 not detected at default I2C address. Please check wiring.");
+      // }
+      return 1;
+   }
+   Serial1.println("MLX90640 online!");
    status = MLX90640_DumpEE(MLX90640_address, eeMLX90640);
    if (status != 0)
-         Serial1.println("Failed to load system parameters");
+      Serial1.println("Failed to load system parameters");
 
    status = MLX90640_ExtractParameters(eeMLX90640, &mlx90640);
    if (status != 0)
@@ -302,81 +350,84 @@ void task_mlx(void * ptr){
       Serial1.print(" status = ");
       Serial1.println(status);
    }
-   //Once params are extracted, we can release eeMLX90640 array
-      MLX90640_I2CWrite(0x33, 0x800D, 6401);    // writes the value 1901 (HEX) = 6401 (DEC) in the register at position 0x800D to enable reading out the temperatures!!!
-   // ===============================================================================================================================================================
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x00); //Set rate to 0.25Hz effective - Works
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x01); //Set rate to 0.5Hz effective - Works
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x02); //Set rate to 1Hz effective - Works
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x03); //Set rate to 2Hz effective - Works
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x04); //Set rate to 4Hz effective - Works
+   MLX90640_SetRefreshRate(MLX90640_address, 0x04); //Set rate to 4Hz effective - Works
+   // MLX90640_I2CWrite(0x33, 0x800D, 6401);    // writes the value 1901 (HEX) = 6401 (DEC) in the register at position 0x800D to enable reading out the temperatures!!!
    MLX90640_SetRefreshRate(MLX90640_address, 0x05); //Set rate to 8Hz effective - Works at 800kHz
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x06); //Set rate to 16Hz effective - fails
-   //MLX90640_SetRefreshRate(MLX90640_address, 0x07); //Set rate to 32Hz effective - fails
+   return 0;
+}
 
+void mlx_loop(){
+   if(!mlx_is_connected){mlx_setup();}
+   if (!freeze && mlx_is_connected==true){ // 如果画面被暂停会跳过这个热成像图的刷新
+      lock = true;
+      for (byte x = 0 ; x < 2 ; x++){
+         uint16_t mlx90640Frame[834];
+         int status = MLX90640_GetFrameData(MLX90640_address, mlx90640Frame);
+      
+         if (status < 0){
+            Serial1.print("GetFrame Error: ");
+            Serial1.println(status);
+            }
+         float vdd = MLX90640_GetVdd(mlx90640Frame, &mlx90640);
+         float Ta = MLX90640_GetTa(mlx90640Frame, &mlx90640);
+         float tr = Ta - TA_SHIFT; //Reflected temperature based on the sensor ambient temperature
+         float emissivity = 0.95;
+         MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
+      }
+      // 坏点补偿示意
+      // for(int i=352; i<384; i++){
+      //   mlx90640To[i] = 0.5 * (mlx90640To[i+32] + mlx90640To[i-32]) ;
+      // }
+      // for(int i=288; i<320; i++){
+      //   mlx90640To[i] = 0.5 * (mlx90640To[i+32] + mlx90640To[i-32]) ;
+      // }
+      // mlx90640To[229] = 0.5 * (mlx90640To[228] + mlx90640To[230]);    // eliminate the error-pixels
+      
+      T_min = mlx90640To[0];
+      T_max = mlx90640To[0];
+      T_avg = mlx90640To[0];
+      for (int i = 1; i < 768; i++){
+         if((mlx90640To[i] > -41) && (mlx90640To[i] < 301))
+            {
+               if(mlx90640To[i] < T_min)
+                  {
+                  T_min = mlx90640To[i];
+                  }
+
+               if(mlx90640To[i] > T_max)
+                  {
+                  T_max = mlx90640To[i];
+                  max_x = i / 32;
+                  max_y = i % 32;
+                  }
+            #if defined(KALMAN)
+            mlx90640To[i] = KalmanFilter(&kfpVar3Array[i], mlx90640To[i]);
+            #endif
+            }
+         else if(i > 0){
+               mlx90640To[i] = mlx90640To[i-1];
+            }
+         else{
+                mlx90640To[i] = mlx90640To[i+1];
+            }
+            T_avg = T_avg + mlx90640To[i];
+         }
+      T_avg = T_avg / 768;
+      #if defined(KALMAN)
+      T_avg = KalmanFilter(&kfpVar1, T_avg);
+      T_max = KalmanFilter(&kfpVar2, T_max);
+      T_min = KalmanFilter(&kfpVar3, T_min);
+      #endif
+   }
+   lock = false;
+}
+
+// 热成像读取多任务
+void task_mlx(void * ptr){
+   mlx_setup();
    // MLX主循环
    for(;power_on==true;){
-      if (!freeze){ // 如果画面被暂停会跳过这个热成像图的刷新
-         lock = true;
-         for (byte x = 0 ; x < 2 ; x++){
-            uint16_t mlx90640Frame[834];
-            int status = MLX90640_GetFrameData(MLX90640_address, mlx90640Frame);
-         
-            if (status < 0){
-               Serial1.print("GetFrame Error: ");
-               Serial1.println(status);
-               }
-            float vdd = MLX90640_GetVdd(mlx90640Frame, &mlx90640);
-            float Ta = MLX90640_GetTa(mlx90640Frame, &mlx90640);
-
-            float tr = Ta - TA_SHIFT; //Reflected temperature based on the sensor ambient temperature
-            float emissivity = 0.95;
-
-            MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
-         }
-            // determine T_min and T_max and eliminate error pixels
-            // ====================================================
-
-         // mlx90640To[1*32 + 21] = 0.5 * (mlx90640To[1*32 + 20] + mlx90640To[1*32 + 22]);    // eliminate the error-pixels
-         // mlx90640To[4*32 + 30] = 0.5 * (mlx90640To[4*32 + 29] + mlx90640To[4*32 + 31]);    // eliminate the error-pixels
-         
-         
-
-         T_min = mlx90640To[0];
-         T_max = mlx90640To[0];
-         T_avg = mlx90640To[0];
-         for (int i = 1; i < 768; i++){
-            if((mlx90640To[i] > -41) && (mlx90640To[i] < 301))
-               {
-                  if(mlx90640To[i] < T_min)
-                     {
-                     T_min = mlx90640To[i];
-                     }
-
-                  if(mlx90640To[i] > T_max)
-                     {
-                     T_max = mlx90640To[i];
-                     max_x = i / 32;
-                     max_y = i % 32;
-                     }
-               mlx90640To[i] = KalmanFilter(&kfpVar3Array[i], mlx90640To[i]);
-               }
-            else if(i > 0)   // temperature out of range
-               {
-                  mlx90640To[i] = mlx90640To[i-1];
-               }
-            else
-               {
-                  mlx90640To[i] = mlx90640To[i+1];
-               }
-               T_avg = T_avg + mlx90640To[i];
-            }
-         T_avg = T_avg / 768;
-         T_avg = KalmanFilter(&kfpVar1, T_avg);
-         T_max = KalmanFilter(&kfpVar2, T_max);
-         T_min = KalmanFilter(&kfpVar3, T_min);
-         }
-      lock = false;
+      mlx_loop();
       vTaskDelay(10);
    }
    vTaskDelete(NULL); 
@@ -392,7 +443,7 @@ void power_off(){
    }
    
    power_on = false;
-   digitalWrite(MLX_VDD, LOW);
+   digitalWrite(MLX_VDD, HIGH);
    analogWrite(SCREEN_BL_PIN, 0);
    digitalWrite(SCREEN_BL_PIN, LOW);
    vTaskDelay(2000);
@@ -414,203 +465,78 @@ void set_brightness(int _brightness){
    }
 }
 
-
-// 平滑的开机
-void task_smooth_on(void * ptr){
-//    ledcSetup(0, 3000, 10);
-//    ledcAttachPin(SCREEN_BL_PIN, 0);
+void smooth_on(){
    pinMode(SCREEN_BL_PIN, OUTPUT);
    analogWrite(SCREEN_BL_PIN, 0);
-   vTaskDelay(100);
    for(int i=0; i<brightness; i++){
       analogWrite(SCREEN_BL_PIN, i);
       vTaskDelay(2);
    }
+}
+
+// 平滑的开机
+void task_smooth_on(void * ptr){
+   smooth_on();
    vTaskDelete(NULL); 
 }
 
 
-// 电池管理多任务
-void task_bat(void * ptr){
-   pinMode(BAT_ADC, INPUT);
-   float r1 = 300.;
-   float r2 = 680.;
-   float coef = (r1+r2) / r2;
-   int adc_value = analogRead(BAT_ADC);
-   for(;power_on==true;){
-      adc_value = analogRead(BAT_ADC);
-      bat_v = (float)adc_value / 1024. * 3.3 * coef;
-      vTaskDelay(1000);
-   }
-   vTaskDelete(NULL);
-}
-
-void task_button(void * ptr){
-   
-   pinMode(buttonPin1, INPUT_PULLUP);
-//    pinMode(buttonPin2, INPUT_PULLUP);
-   unsigned long btn1_pushed_start_time =  0;
-   bool btn2_pushed = false;
-   bool btn1_pushed = false;
-   vTaskDelay(1000);
-   for(;power_on==true;){
-      
-      if (digitalRead(buttonPin1) == LOW){  // 长按btn1的关机功能
-         if (millis() - btn1_pushed_start_time >= BTN_LONG_PUSH_T){
-            power_off();
-            Serial1.println("power off");
-         } 
-         vTaskDelay(5);
-         if (digitalRead(buttonPin1) == LOW){btn1_pushed=true;}
-      }else{
-         btn1_pushed_start_time = millis();
-         if (btn1_pushed) {  // 短按btn1
-            test_points[0][0] = 0;
-            test_points[0][1] = 0;
-            if (freeze==true){ clear_local_temp=true; }
-            }
-         btn1_pushed=false;
-      }
-
-      if (BOOTSEL){
-         vTaskDelay(5);
-         if (BOOTSEL){btn2_pushed=true;}
-      }else{
-         if (btn2_pushed) {freeze = !freeze; }
-         btn2_pushed=false;
-      }
-
-      buttonState1 = digitalRead(buttonPin1);
-      buttonState2 = BOOTSEL;
-      vTaskDelay(100); 
-   }
-   vTaskDelete(NULL);
-}
-
-void task_button_test(void * ptr){
-    pinMode(buttonPin1, INPUT_PULLUP);
-    vTaskDelay(1000);
-    for(;;){
-        Serial1.printf("%d, %d\n", digitalRead(buttonPin1), BOOTSEL);
-        vTaskDelay(100);
-    }
-}
-
-
-void task_touchpad(void * ptr){
-   // touch.begin();
-   uint16_t x, y;
-   uint16_t start_x, start_y;
-   bool long_pushed = false;
-   unsigned long touch_pushed_start_time =  0;
-   bool touched = false;
-   int start_br = brightness;
-   for(;power_on==true;){
-      if (touch_updated) {
-         if( touch.tp.touching )
-         {
-            x= touch.tp.y;
-            y = 240 - touch.tp.x;
-            if (touched==false){start_x = x;  start_y = y; diffy=0; diffx=0;}  // 下降沿
-            if (millis() - touch_pushed_start_time >= TOUCH_LONG_PUSH_T){
-               long_pushed = true;
-               diffx= start_x-x;
-               diffy= start_y-y;
-               set_brightness(start_br+diffy*5);
-               }else{ // 短按的中间
-                  
-               }
-         }else{
-            touch_pushed_start_time = millis();
-            if (touched==true){  // 上升沿
-               if (start_br == brightness){
-                  if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
-               }
-               if (long_pushed==false){  // 短按时
-                  if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
-               }
-               start_br = brightness;
-               long_pushed = false;  // 上升沿将长按检测标识符进行复位
-            }  
-         }
-         // Serial.printf("touch: %d %d\n", touched, touch.tp.touching);
-         touched = touch.tp.touching;
-         touch_updated = false;
-      }
-      vTaskDelay(10);
-   }
-   vTaskDelete(NULL);
-}
-
-void task_touch_test(void * ptr){
-   // touch.begin();
-   uint16_t x, y;
-   for(;power_on==true;){
-        touch.update();
-        if( touch.tp.touching ){
-            x= touch.tp.y;
-            y = 240 - touch.tp.x;
-            Serial1.printf("touch: %d %d\n", x, y);
-        }
-    vTaskDelay(30);
-   }
-   vTaskDelete(NULL);
-}
-
-void task_screen_draw(void * ptr){
+uint32_t dt = millis();
+void screen_setup(){
    tft.setRotation(SCREEN_ROTATION);
    tft.fillScreen(TFT_BLACK);
    // tft.fillScreen(TFT_GREEN);
    test_points[0][0] = 120;
    test_points[0][1] = 110;
+}
+void screen_loop(){
+   if (!freeze){ // 如果画面被暂停会跳过这个热成像图的刷新
+   // 只有画面更新才会绘制一张热成像图
+   dt = millis();
+   while(lock && power_on){
+      // 阻塞画面
+      vTaskDelay(1);
+   }
+   for (int i = 0; i < 768; i++) {
+      // mlx90640To_buffer[i] = mlx90640To[i];
+      mlx90640To_buffer[i] = (int)(180.0 * (mlx90640To[i] - T_min) / (T_max - T_min));
+   }  // 拷贝温度信息
+   draw_heat_image();
+   dt = millis() - dt;
+   }else{dt = 0;}
 
-   // tft.setBitmapColor(16);
+   tft.setRotation(SCREEN_ROTATION);
+   if (test_points[0][0]==0 && test_points[0][1]==0 ){}else{show_local_temp(test_points[0][0], test_points[0][1]);}
+   if (clear_local_temp==true) {draw_heat_image(false); clear_local_temp=false;}
+
+   tft.setRotation(SCREEN_ROTATION);
+   tft.setTextColor(TFT_WHITE, TFT_BLACK); 
+   if (!mlx_is_connected){
+      tft.setCursor(25, 110);
+      tft.printf("MLX90640 not detected at default I2C address. Please check wiring.");
+   }
+   tft.setCursor(25, 220);
+   tft.printf("max: %.2f  ", T_max);
+   tft.setCursor(25, 230);
+   tft.printf("min: %.2f  ", T_min);
+
+   tft.setCursor(105, 220);
+   tft.printf("avg: %.2f  ", T_avg);
+   tft.setCursor(105, 230);
+   tft.printf("bat: %.2f v ", bat_v);
+
+   tft.setCursor(180, 220);
+   tft.printf("bright: %d  ", brightness);
+   tft.setCursor(180, 230);
+   tft.printf("time: %d ", dt);
+   tft.printf("ms     ");
+   // vTaskDelay(10);
+}
+
+void task_screen_draw(void * ptr){
+   screen_setup();
    for(;power_on==true;){
-      // 这么做是预防touch和spi总线发生冲突
-      // if (!touch_updated){touch.update(); touch_updated=true;}
-
-    //   // read the state of the pushbutton value:
-    //   buttonState1 = digitalRead(buttonPin1);
-    //   buttonState2 = digitalRead(buttonPin2);
-
-      if (!freeze){ // 如果画面被暂停会跳过这个热成像图的刷新
-         // 只有画面更新才会绘制一张热成像图
-         while(lock && power_on){
-            // 阻塞画面
-            vTaskDelay(1);
-         }
-         for (int i = 0; i < 768; i++) {
-            // mlx90640To_buffer[i] = mlx90640To[i];
-            mlx90640To_buffer[i] = (int)(180.0 * (mlx90640To[i] - T_min) / (T_max - T_min));
-         }  // 拷贝温度信息
-         draw_heat_image();
-         
-      }
-
-      tft.setRotation(SCREEN_ROTATION);
-      if (test_points[0][0]==0 && test_points[0][1]==0 ){}else{show_local_temp(test_points[0][0], test_points[0][1]);}
-      // if (show_local_temp_flag==true) {show_local_temp(test_points[0][0], test_points[0][1]);}
-      if (clear_local_temp==true) {draw_heat_image(false); clear_local_temp=false;}
-      // tft.endWrite();
-
-      tft.setRotation(SCREEN_ROTATION);
-      tft.setTextColor(TFT_WHITE, TFT_BLACK); 
-      tft.setCursor(40, 220);
-      tft.printf("max: %.2f  ", T_max);
-      tft.setCursor(40, 230);
-      tft.printf("min: %.2f  ", T_min);
-      
-      tft.setCursor(120, 220);
-      tft.printf("avg: %.2f  ", T_avg);
-      tft.setCursor(120, 230);
-      tft.printf("bat: %.2f v ", bat_v);
-      
-      tft.setCursor(190, 220);
-      tft.printf("  brightness");
-      tft.setCursor(190, 230);
-      tft.printf("       %d  ", brightness);
-
-      vTaskDelay(10);
+      screen_loop();
    }
    vTaskDelete(NULL);
 }
@@ -653,50 +579,49 @@ void task_serial_communicate(void * ptr){
 
 
 
-void setup(void)
- {
-    Serial.begin(115200);
-    Serial1.begin(115200);
-    KalmanArrayInit();
-
-    Serial1.println("RP2040 is starting...");
-    touch.begin();
-    Serial1.println("SCREEN is starting...");
-    // 按钮启用
-    pinMode(SCREEN_BL_PIN, OUTPUT);
-    digitalWrite(SCREEN_BL_PIN, LOW);
-    pinMode(SCREEN_VDD, OUTPUT);
-    digitalWrite(SCREEN_VDD, LOW);
-    xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 5, NULL, 1, NULL);
-   //  xTaskCreate(task_bat, "BAT_MANAGER", 1024 * 2, NULL, 3, NULL);
-    tft.init();
-    tft.setSwapBytes(true);
-    xTaskCreate(task_screen_draw, "SCREEN", 1024 * 8, NULL, 3, NULL);
-    xTaskCreate(task_smooth_on, "SMOOTH_ON", 1024, NULL, 2, NULL);
-   //  xTaskCreate(task_button,    "BUTTON", 1024 * 2, NULL, 3, NULL);
-   //  xTaskCreate(task_touchpad,  "TOUCHPAD", 1024 * 4, NULL, 1, NULL);
-   //  xTaskCreate(task_serial_communicate, "SERIAL_COMM", 1024 * 5, NULL, 5, NULL);
-    // xTaskCreate(task_touch_test,  "TOUCHTEST", 1024, NULL, 3, NULL);
-
-}
-
-
-
-void loop() 
-{
- vTaskDelay(3000);
-}
-
 void setup1(void)
+ {
+   Serial.begin(115200);
+   #if defined(SERIAL1_DEBUG)
+   Serial1.begin(115200);
+   Serial1.println("RP2040 is starting...");
+   #endif
+   #if defined(KALMAN)
+   KalmanArrayInit();
+   #endif
+   touch.begin();
+//  mlx_setup();
+   // 按钮启用
+   pinMode(SCREEN_BL_PIN, OUTPUT);
+   digitalWrite(SCREEN_BL_PIN, LOW);
+   pinMode(SCREEN_VDD, OUTPUT);
+   digitalWrite(SCREEN_VDD, LOW);
+//  xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 4, NULL, 1, NULL);
+//  xTaskCreate(task_bat, "BAT_MANAGER", 1024 * 2, NULL, 3, NULL);
+   tft.init();
+   tft.setSwapBytes(true);
+   tft.initDMA();
+   screen_setup();
+   vTaskDelay(300);
+   smooth_on();
+}
+
+void loop1() 
 {
-    pinMode(buttonPin1, INPUT_PULLUP);
-    pinMode(BAT_ADC, INPUT);
-    delay(1000);
-    uint8_t send_buf[4];
-    unsigned long btn1_pushed_start_time =  0;
-    unsigned long btn2_pushed_start_time =  0;
-    bool btn2_pushed = false;
-    bool btn1_pushed = false;
+   screen_loop();
+}
+
+void setup(void)
+{
+   pinMode(buttonPin1, INPUT_PULLUP);
+   pinMode(BAT_ADC, INPUT);
+   mlx_setup();
+   delay(1000);
+   uint8_t send_buf[4];
+   unsigned long btn1_pushed_start_time =  0;
+   unsigned long btn2_pushed_start_time =  0;
+   bool btn2_pushed = false;
+   bool btn1_pushed = false;
    
    float r1 = 300.;
    float r2 = 680.;
@@ -711,97 +636,97 @@ void setup1(void)
    unsigned long touch_pushed_start_time =  0;
    bool touched = false;
    int start_br = brightness;
+
+   
    for(;power_on==true;){
-        
-        if (BOOTSEL){  // 长按btn1的关机功能
-            if (millis() - btn1_pushed_start_time >= BTN_LONG_PUSH_T){
+      if (BOOTSEL){  // 长按btn1的关机功能
+         if (millis() - btn1_pushed_start_time >= BTN_LONG_PUSH_T){
+         power_off();
+         Serial1.println("power off");
+         } 
+         vTaskDelay(5);
+         if (BOOTSEL){btn1_pushed=true;}
+      }else{
+         btn1_pushed_start_time = millis();
+         if (btn1_pushed) {  // 短按btn1
+         test_points[0][0] = 0;
+         test_points[0][1] = 0;
+         if (freeze==true){ clear_local_temp=true; }
+         }
+         btn1_pushed=false;
+      }
+
+      if (digitalRead(buttonPin1) == LOW){
+         if (millis() - btn2_pushed_start_time >= BTN_LONG_PUSH_T){
             power_off();
             Serial1.println("power off");
-            } 
-            vTaskDelay(5);
-            if (BOOTSEL){btn1_pushed=true;}
-        }else{
-            btn1_pushed_start_time = millis();
-            if (btn1_pushed) {  // 短按btn1
-            test_points[0][0] = 0;
-            test_points[0][1] = 0;
-            if (freeze==true){ clear_local_temp=true; }
-            }
-            btn1_pushed=false;
-        }
-
-        if (digitalRead(buttonPin1) == LOW){
-            if (millis() - btn2_pushed_start_time >= BTN_LONG_PUSH_T){
-               power_off();
-               Serial1.println("power off");
-            }
-            vTaskDelay(5);
-            if (digitalRead(buttonPin1) == LOW){btn2_pushed=true;}
-        }else{
-            btn2_pushed_start_time = millis();
-            if (btn2_pushed) {freeze = !freeze; }
-            btn2_pushed=false;
-        }
-
-        buttonState1 = BOOTSEL;
-        buttonState2 = digitalRead(buttonPin1);
-        // vTaskDelay(100); 
-    
-        while (lock == true) {vTaskDelay(1);}
-        memcpy(mlx90640To_send_buffer, mlx90640To, 768 * sizeof(float));
-        // for (int i = 0; i < 768; i++) {mlx90640To_send_buffer[i] = mlx90640To[i];} 
-        Serial.print("BEGIN");
-        send_float_as_uint8(T_max, send_buf);
-        send_float_as_uint8(T_min, send_buf);
-        send_float_as_uint8(T_avg, send_buf);
-        send_to_serial();
-        Serial.print("END");
-      //   vTaskDelay(30);
-
-        if(xStartTime + xWait > xTaskGetTickCount()){
-         adc_value = analogRead(BAT_ADC);
-         bat_v = (float)adc_value / 1024. * 3.3 * coef;
-         xStartTime = xTaskGetTickCount();
-        }
-
-        if (!touch_updated){touch.update(); touch_updated=true;}
-        if (touch_updated) {
-         if( touch.tp.touching )
-         {
-            x= touch.tp.y;
-            y = 240 - touch.tp.x;
-            if (touched==false){start_x = x;  start_y = y; diffy=0; diffx=0;}  // 下降沿
-            if (millis() - touch_pushed_start_time >= TOUCH_LONG_PUSH_T){
-               long_pushed = true;
-               diffx= start_x-x;
-               diffy= start_y-y;
-               set_brightness(start_br+diffy*5);
-               }else{ // 短按的中间
-                  
-               }
-         }else{
-            touch_pushed_start_time = millis();
-            if (touched==true){  // 上升沿
-               if (start_br == brightness){
-                  if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
-               }
-               if (long_pushed==false){  // 短按时
-                  if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
-               }
-               start_br = brightness;
-               long_pushed = false;  // 上升沿将长按检测标识符进行复位
-            }  
          }
-         // Serial.printf("touch: %d %d\n", touched, touch.tp.touching);
-         touched = touch.tp.touching;
-         touch_updated = false;
-      } 
-     vTaskDelay(1);
-    }
-    vTaskDelete(NULL);
+         vTaskDelay(5);
+         if (digitalRead(buttonPin1) == LOW){btn2_pushed=true;}
+      }else{
+         btn2_pushed_start_time = millis();
+         if (btn2_pushed) {freeze = !freeze; }
+         btn2_pushed=false;
+      }
+
+      buttonState1 = BOOTSEL;
+      buttonState2 = digitalRead(buttonPin1);
+   
+      while (lock == true) {vTaskDelay(1);}
+      memcpy(mlx90640To_send_buffer, mlx90640To, 768 * sizeof(float));
+      // for (int i = 0; i < 768; i++) {mlx90640To_send_buffer[i] = mlx90640To[i];} 
+      Serial.print("BEGIN");
+      send_float_as_uint8(T_max, send_buf);
+      send_float_as_uint8(T_min, send_buf);
+      send_float_as_uint8(T_avg, send_buf);
+      send_to_serial();
+      Serial.print("END");
+   //   vTaskDelay(30);
+
+      if(xStartTime + xWait > xTaskGetTickCount()){
+      adc_value = analogRead(BAT_ADC);
+      bat_v = (float)adc_value / 1024. * 3.3 * coef;
+      xStartTime = xTaskGetTickCount();
+      }
+
+      if (!touch_updated){touch.update(); touch_updated=true;}
+      if (touch_updated) {
+      if( touch.tp.touching )
+      {
+         x= touch.tp.y;
+         y = 240 - touch.tp.x;
+         if (touched==false){start_x = x;  start_y = y; diffy=0; diffx=0;}  // 下降沿
+         if (millis() - touch_pushed_start_time >= TOUCH_LONG_PUSH_T){
+            long_pushed = true;
+            diffx= start_x-x;
+            diffy= start_y-y;
+            set_brightness(start_br+diffy*5);
+            }else{ // 短按的中间
+               
+            }
+      }else{
+         touch_pushed_start_time = millis();
+         if (touched==true){  // 上升沿
+            if (start_br == brightness){
+               if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
+            }
+            if (long_pushed==false){  // 短按时
+               if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
+            }
+            start_br = brightness;
+            long_pushed = false;  // 上升沿将长按检测标识符进行复位
+         }  
+      }
+      touched = touch.tp.touching;
+      touch_updated = false;
+   } 
+   mlx_loop();
+   vTaskDelay(1);
+   }
+   vTaskDelete(NULL);
 }
 
-void loop1() 
+void loop() 
 {
    vTaskDelay(3000);
 }

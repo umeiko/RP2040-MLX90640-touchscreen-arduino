@@ -35,10 +35,10 @@ inline int getValue(int y, int x, int *datas){
 }
 
 #if defined(FASTER)
-float bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
+int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
     int src_x, src_y;
     int src_x0, src_y0, src_x1, src_y1;
-    int value00, value01, value10, value11, v0, v1, frac_x, frac_y;;
+    int value00, value01, value10, value11, v0, v1, frac_x, frac_y;
             
     // 目标在源数据上的坐标, 当作保留一位小数处理
     src_x = (dst_x*10000 + 5000) / 9 - 5000;
@@ -74,42 +74,42 @@ float bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
     return (v0 * (10000 - frac_y) + v1 * frac_y) / 10000;
 }
 
-float bio_linear_interpolation(int dst_x, int dst_y, float *src_data){
-    int src_x, src_y;
-    int src_x0, src_y0, src_x1, src_y1;
-    float value00, value01, value10, value11, v0, v1, frac_x, frac_y;;
+// float bio_linear_interpolation(int dst_x, int dst_y, float *src_data){
+//     int src_x, src_y;
+//     int src_x0, src_y0, src_x1, src_y1;
+//     float value00, value01, value10, value11, v0, v1, frac_x, frac_y;;
             
-    // 目标在源数据上的坐标, 当作保留一位小数处理
-    src_x = (dst_x*10 + 5) / 9 - 5;
-    src_y = (dst_y*10 + 5) / 9 - 5;
+//     // 目标在源数据上的坐标, 当作保留一位小数处理
+//     src_x = (dst_x*10 + 5) / 9 - 5;
+//     src_y = (dst_y*10 + 5) / 9 - 5;
 
-    // 找到四个最近邻点的位置
-    src_x0 = src_x / 10;
-    src_y0 = src_y / 10;
-    src_x1 = src_x0+1;
-    src_y1 = src_y0+1;
+//     // 找到四个最近邻点的位置
+//     src_x0 = src_x / 10;
+//     src_y0 = src_y / 10;
+//     src_x1 = src_x0+1;
+//     src_y1 = src_y0+1;
 
-    // 确保不超出源图像边界
-    src_x1 = min(src_x1, 31);
-    src_y1 = min(src_y1, 23);
+//     // 确保不超出源图像边界
+//     src_x1 = min(src_x1, 31);
+//     src_y1 = min(src_y1, 23);
 
-    // 计算分数部分
-    frac_x = (float)(src_x - src_x0 * 10) / 10;
-    frac_y = (float)(src_y - src_y0 * 10) / 10;
+//     // 计算分数部分
+//     frac_x = (float)(src_x - src_x0 * 10) / 10;
+//     frac_y = (float)(src_y - src_y0 * 10) / 10;
 
-    // 获取四个最近邻点的值
-    value00 = getValue(src_y0, src_x0, src_data);
-    value01 = getValue(src_y0, src_x1, src_data);
-    value10 = getValue(src_y1, src_x0, src_data);
-    value11 = getValue(src_y1, src_x1, src_data);
-    // Serial.printf("%d, %d, %d, %d, %.2f\n", src_x0, src_y0, src_x1, src_y1, frac_x);
-    // 沿x轴的线性插值
-    v0 = value00 * (1 - frac_x) + value01 * frac_x;
-    v1 = value10 * (1 - frac_x) + value11 * frac_x;
+//     // 获取四个最近邻点的值
+//     value00 = getValue(src_y0, src_x0, src_data);
+//     value01 = getValue(src_y0, src_x1, src_data);
+//     value10 = getValue(src_y1, src_x0, src_data);
+//     value11 = getValue(src_y1, src_x1, src_data);
+//     // Serial.printf("%d, %d, %d, %d, %.2f\n", src_x0, src_y0, src_x1, src_y1, frac_x);
+//     // 沿x轴的线性插值
+//     v0 = value00 * (1 - frac_x) + value01 * frac_x;
+//     v1 = value10 * (1 - frac_x) + value11 * frac_x;
 
-    // 沿y轴的线性插值
-    return v0 * (1 - frac_y) + v1 * frac_y;
-}
+//     // 沿y轴的线性插值
+//     return v0 * (1 - frac_y) + v1 * frac_y;
+// }
 #else
 // 双线性插值，根据坐标返回插值结果
 float bio_linear_interpolation(int dst_x, int dst_y, float *src_data){
