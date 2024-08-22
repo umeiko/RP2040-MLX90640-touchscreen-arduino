@@ -6,6 +6,8 @@
 - 引出了UART1，以及 SWD 调试接口。
 - 可连接上位机图传。
 - 集成卡尔曼滤波算法。
+
+![94acdedc4a31000fca7f8e9933caeeaf1839720](https://github.com/user-attachments/assets/5003e117-2848-4e2d-9113-3dc7317ecc94)
 ![image](https://github.com/user-attachments/assets/fe6f153e-51b8-4891-8e94-cc8b2bdb17b4)
 ![3a3f02000d5065bd46c5adb85640058](https://github.com/user-attachments/assets/5373e2d0-d3f9-4648-afc6-5e263d305e0c)
 
