@@ -10,6 +10,7 @@
 #include <TFT_eSPI.h> 
 #include <SPI.h>
 #include <Wire.h>
+#include <EEPROM.h>
 
 #include "pico/stdlib.h"
 #include "hardware/rtc.h"
@@ -49,7 +50,7 @@
 // #define DRAW_PIXELS  // 使用像素来绘制
 #define DRAW_PIXELS_DMA  // 使用DMA来绘制
 
-// #define KALMAN  // 使用 卡尔曼滤波器
+#define KALMAN  // 使用 卡尔曼滤波器
 // #define SERIAL1_DEBUG  
 
 
@@ -104,7 +105,7 @@ static uint16_t heat_bitmap[32*_SCALE * 24*_SCALE] = {}; // rgb56556形式的内
 #endif
 
 uint16_t test_points[5][2];
-int brightness = 255;
+int brightness = 100;
 
 int R_colour, G_colour, B_colour;            
 // int i, j;                                    
@@ -123,6 +124,8 @@ bool power_on = true;  // 是否开机
 bool freeze = false;  // 暂停画面
 bool show_local_temp_flag = true;  // 是否显示点测温
 bool clear_local_temp = false;     // 点测温清除
+
+bool use_upsample = true;  // 是否上采样
 
 TFT_eSPI tft = TFT_eSPI();  
 CST816T touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, -1);	// sda, scl, rst, irq
@@ -278,6 +281,7 @@ void draw_heat_image(bool re_mapcolor=true){
 }
 #endif
 
+
 #if defined(DRAW_PIXELS_DMA)
 const int lines = 25;
 uint16_t  lineBuffer[32 * _SCALE * lines]; // Toggle buffer for lines
@@ -290,34 +294,46 @@ void draw_heat_image(bool re_mapcolor=true){
    static int value;
    static int now_y = 0;
    tft.setRotation(SCREEN_ROTATION);
-   tft.startWrite();
-   for(int y=0; y<24 * _SCALE; y++){ 
-      for(int x=0; x<32 * _SCALE; x++){
-         value = bio_linear_interpolation(x, y, mlx90640To_buffer);
-         getColour(value);
-         lineBuffer[x + now_y*32 * _SCALE] = tft.color565(R_colour, G_colour, B_colour);
-      }
-      now_y ++;
-      if(now_y==lines){
+   if(use_upsample){
+      tft.startWrite();
+      for(int y=0; y<24 * _SCALE; y++){ 
+         for(int x=0; x<32 * _SCALE; x++){
+            value = bio_linear_interpolation(x, y, mlx90640To_buffer);
+            getColour(value);
+            lineBuffer[x + now_y*32 * _SCALE] = tft.color565(R_colour, G_colour, B_colour);
+         }
+         now_y ++;
+         if(now_y==lines){
+            if (dmaBufferSel) dmaBufferPtr = dmaBuffer2;
+            else dmaBufferPtr = dmaBuffer1;
+            dmaBufferSel = !dmaBufferSel; // Toggle buffer selection
+            // tft.startWrite();
+            tft.pushImageDMA(0, y-now_y, 32*_SCALE, lines, lineBuffer, dmaBufferPtr);
+            // tft.endWrite();
+            now_y = 0;
+         }
+      }if(now_y!=0){
          if (dmaBufferSel) dmaBufferPtr = dmaBuffer2;
          else dmaBufferPtr = dmaBuffer1;
          dmaBufferSel = !dmaBufferSel; // Toggle buffer selection
          // tft.startWrite();
-         tft.pushImageDMA(0, y-now_y, 32*_SCALE, lines, lineBuffer, dmaBufferPtr);
+         tft.pushImageDMA(0, 24*_SCALE-1-now_y, 32*_SCALE, now_y, lineBuffer, dmaBufferPtr);
          // tft.endWrite();
          now_y = 0;
       }
-   }if(now_y!=0){
-      if (dmaBufferSel) dmaBufferPtr = dmaBuffer2;
-      else dmaBufferPtr = dmaBuffer1;
-      dmaBufferSel = !dmaBufferSel; // Toggle buffer selection
-      // tft.startWrite();
-      tft.pushImageDMA(0, 24*_SCALE-1-now_y, 32*_SCALE, now_y, lineBuffer, dmaBufferPtr);
-      // tft.endWrite();
-      now_y = 0;
+      tft.endWrite();
+   }else{
+      tft.setRotation(3);
+      for (int i = 0 ; i < 24 ; i++){
+      for (int j = 0; j < 32; j++){
+         // if (re_mapcolor) {mlx90640To_buffer[i*32 + j] = 180.0 * (mlx90640To_buffer[i*32 + j] - T_min) / (T_max - T_min);}
+         getColour(mlx90640To_buffer[i*32 + j]);
+         tft.fillRect(280 - j * _SCALE, (240 - _SCALE * 24) + i * _SCALE, _SCALE, _SCALE, tft.color565(R_colour, G_colour, B_colour));  
+      }
+      }
    }
-   tft.endWrite();
 }
+
 #endif
 
 int status;
@@ -356,8 +372,12 @@ int mlx_setup(){
    return 0;
 }
 
+uint16_t count_retry = 0;
 void mlx_loop(){
-   if(!mlx_is_connected){mlx_setup();}
+   if(!mlx_is_connected && count_retry < 10){
+      mlx_setup();
+      count_retry++;
+   }
    if (!freeze && mlx_is_connected==true){ // 如果画面被暂停会跳过这个热成像图的刷新
       lock = true;
       for (byte x = 0 ; x < 2 ; x++){
@@ -374,13 +394,7 @@ void mlx_loop(){
          float emissivity = 0.95;
          MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
       }
-      // 坏点补偿示意
-      // for(int i=352; i<384; i++){
-      //   mlx90640To[i] = 0.5 * (mlx90640To[i+32] + mlx90640To[i-32]) ;
-      // }
-      // for(int i=288; i<320; i++){
-      //   mlx90640To[i] = 0.5 * (mlx90640To[i+32] + mlx90640To[i-32]) ;
-      // }
+
       // mlx90640To[229] = 0.5 * (mlx90640To[228] + mlx90640To[230]);    // eliminate the error-pixels
       
       T_min = mlx90640To[0];
@@ -418,8 +432,8 @@ void mlx_loop(){
       T_max = KalmanFilter(&kfpVar2, T_max);
       T_min = KalmanFilter(&kfpVar3, T_min);
       #endif
+      lock = false;
    }
-   lock = false;
 }
 
 // 热成像读取多任务
@@ -458,6 +472,7 @@ void power_off(){
 // 背光调节,会限制输入亮度在正确范围内
 void set_brightness(int _brightness){
    if (_brightness < 255 && _brightness > 5){
+      analogWriteFreq(10000);
       analogWrite(SCREEN_BL_PIN, _brightness);
       brightness = _brightness;
    }else if(_brightness >= 255){analogWrite(SCREEN_BL_PIN, 255); brightness=255;
@@ -468,6 +483,7 @@ void set_brightness(int _brightness){
 void smooth_on(){
    pinMode(SCREEN_BL_PIN, OUTPUT);
    analogWrite(SCREEN_BL_PIN, 0);
+   analogWriteFreq(10000);
    for(int i=0; i<brightness; i++){
       analogWrite(SCREEN_BL_PIN, i);
       vTaskDelay(2);
@@ -488,6 +504,21 @@ void screen_setup(){
    // tft.fillScreen(TFT_GREEN);
    test_points[0][0] = 120;
    test_points[0][1] = 110;
+   tft.setCursor(25, 220);
+   tft.printf("max: %.2f  ", T_max);
+   tft.setCursor(25, 230);
+   tft.printf("min: %.2f  ", T_min);
+
+   tft.setCursor(105, 220);
+   tft.printf("avg: %.2f  ", T_avg);
+   tft.setCursor(105, 230);
+   tft.printf("bat: %.2f v ", bat_v);
+
+   tft.setCursor(180, 220);
+   tft.printf("bright: %d  ", brightness);
+   tft.setCursor(180, 230);
+   tft.printf("time: %d ", dt);
+   tft.printf("ms     ");
 }
 void screen_loop(){
    if (!freeze){ // 如果画面被暂停会跳过这个热成像图的刷新
@@ -582,6 +613,13 @@ void task_serial_communicate(void * ptr){
 void setup1(void)
  {
    Serial.begin(115200);
+   EEPROM.begin(128);
+   uint8_t value = EEPROM.read(0);
+   if (value != 0 && value != 1) {
+      value = 0;  
+   }
+   use_upsample = value;
+   brightness = EEPROM.read(1);
    #if defined(SERIAL1_DEBUG)
    Serial1.begin(115200);
    Serial1.println("RP2040 is starting...");
@@ -621,6 +659,7 @@ void setup(void)
    unsigned long btn1_pushed_start_time =  0;
    unsigned long btn2_pushed_start_time =  0;
    bool btn2_pushed = false;
+   bool btn2_long_pushed = false;
    bool btn1_pushed = false;
    
    float r1 = 300.;
@@ -658,15 +697,23 @@ void setup(void)
 
       if (digitalRead(buttonPin1) == LOW){
          if (millis() - btn2_pushed_start_time >= BTN_LONG_PUSH_T){
-            power_off();
-            Serial1.println("power off");
+            // power_off();
+            if (!btn2_long_pushed){
+               use_upsample = !use_upsample;
+               btn2_long_pushed = true;
+               EEPROM.write(0, use_upsample);
+               EEPROM.commit();
+               }
          }
          vTaskDelay(5);
          if (digitalRead(buttonPin1) == LOW){btn2_pushed=true;}
       }else{
          btn2_pushed_start_time = millis();
-         if (btn2_pushed) {freeze = !freeze; }
+         if (btn2_pushed) {
+            if (!btn2_long_pushed){freeze = !freeze; }
+         }
          btn2_pushed=false;
+         btn2_long_pushed = false;
       }
 
       buttonState1 = BOOTSEL;
@@ -714,6 +761,8 @@ void setup(void)
                if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
             }
             start_br = brightness;
+            EEPROM.write(1, brightness);
+            EEPROM.commit();
             long_pushed = false;  // 上升沿将长按检测标识符进行复位
          }  
       }

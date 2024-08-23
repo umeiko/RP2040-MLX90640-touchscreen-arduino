@@ -36,9 +36,9 @@ inline int getValue(int y, int x, int *datas){
 
 #if defined(FASTER)
 int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
-    int src_x, src_y;
-    int src_x0, src_y0, src_x1, src_y1;
-    int value00, value01, value10, value11, v0, v1, frac_x, frac_y;
+    static int src_x, src_y;
+    static int src_x0, src_y0, src_x1, src_y1;
+    static int value00, value01, value10, value11, v0, v1, frac_x, frac_y;
             
     // 目标在源数据上的坐标, 当作保留一位小数处理
     src_x = (dst_x*10000 + 5000) / 9 - 5000;
