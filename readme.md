@@ -2,6 +2,7 @@
 
 电路图可以在[这里找到](https://oshwhub.com/umekoko/re-cheng-xiang_copy)
 
+上位机成像在[这里](https://github.com/umeiko/Thermal-Imaging-Receiver)
 - RP2040双核MCU + ST7789屏幕（240 * 280）物理分辨率 + CST816T 触摸IC + MLX90640热成像传感器。
 - 引出了UART1，以及 SWD 调试接口。
 - 可连接上位机图传。
