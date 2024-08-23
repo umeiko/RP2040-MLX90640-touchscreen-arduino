@@ -16,6 +16,10 @@
 - 提供lvgl示例代码，位于`lvgl_rp2040_example`中。
 ### 配置环境
 - 配置 arduino-pico环境，具体可参考[arduino-pico](https://github.com/earlephilhower/arduino-pico/tree/master)仓库。
+- Arduino按照如下参数配置开发板
+
+![image](https://github.com/user-attachments/assets/8196c923-2b48-413e-83a5-6b6efece2df7)
+
 - 配置好 `TFT_eSPI`屏幕驱动库，版本为`2.5.43`，具体可参考[TFT_eSPI](https://github.com/Bodmer/TFT_eSPI/tree/master)仓库。
 - 将`C:\Users\*你自己的名字*\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h`中替换成以下内容：
 
