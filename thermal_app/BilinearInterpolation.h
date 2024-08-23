@@ -35,18 +35,18 @@ inline int getValue(int y, int x, int *datas){
 }
 
 #if defined(FASTER)
-int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
-    static int src_x, src_y;
-    static int src_x0, src_y0, src_x1, src_y1;
-    static int value00, value01, value10, value11, v0, v1, frac_x, frac_y;
+inline int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
+    int src_x, src_y;
+    int src_x0, src_y0, src_x1, src_y1;
+    int value00, value01, value10, value11, v0, v1, frac_x, frac_y;
             
     // 目标在源数据上的坐标, 当作保留一位小数处理
-    src_x = (dst_x*10000 + 5000) / 9 - 5000;
-    src_y = (dst_y*10000 + 5000) / 9 - 5000;
+    src_x = (dst_x*1024 + 512) / 9 - 512;
+    src_y = (dst_y*1024 + 512) / 9 - 512;
 
     // 找到四个最近邻点的位置
-    src_x0 = src_x / 10000;
-    src_y0 = src_y / 10000;
+    src_x0 = src_x / 1024;
+    src_y0 = src_y / 1024;
     src_x1 = src_x0+1;
     src_y1 = src_y0+1;
 
@@ -55,8 +55,8 @@ int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
     src_y1 = min(src_y1, 23);
 
     // 计算分数部分
-    frac_x = src_x - src_x0 * 10000;
-    frac_y = src_y - src_y0 * 10000;
+    frac_x = src_x - src_x0 * 1024;
+    frac_y = src_y - src_y0 * 1024;
 
     // 获取四个最近邻点的值
     value00 = getValue(src_y0, src_x0, src_data);
@@ -65,13 +65,13 @@ int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
     value11 = getValue(src_y1, src_x1, src_data);
     // Serial.printf("%d, %d, %d, %d, %.2f\n", src_x0, src_y0, src_x1, src_y1, frac_x);
     // 沿x轴的线性插值
-    v0 = value00 * (10000 - frac_x) + value01 * frac_x;
-    v1 = value10 * (10000 - frac_x) + value11 * frac_x;
+    v0 = value00 * (1024 - frac_x) + value01 * frac_x;
+    v1 = value10 * (1024 - frac_x) + value11 * frac_x;
 
-    v0 /= 10000;
-    v1 /= 10000;
+    v0 /= 1024;
+    v1 /= 1024;
     // 沿y轴的线性插值
-    return (v0 * (10000 - frac_y) + v1 * frac_y) / 10000;
+    return (v0 * (1024 - frac_y) + v1 * frac_y) / 1024;
 }
 
 // float bio_linear_interpolation(int dst_x, int dst_y, float *src_data){

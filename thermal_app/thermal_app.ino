@@ -634,7 +634,7 @@ void setup1(void)
    digitalWrite(SCREEN_BL_PIN, LOW);
    pinMode(SCREEN_VDD, OUTPUT);
    digitalWrite(SCREEN_VDD, LOW);
-//  xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 4, NULL, 1, NULL);
+   // xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 4, NULL, 1, NULL);
 //  xTaskCreate(task_bat, "BAT_MANAGER", 1024 * 2, NULL, 3, NULL);
    tft.init();
    tft.setSwapBytes(true);
@@ -653,7 +653,8 @@ void setup(void)
 {
    pinMode(buttonPin1, INPUT_PULLUP);
    pinMode(BAT_ADC, INPUT);
-   mlx_setup();
+   // mlx_setup();
+   xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 4, NULL, 1, NULL);
    delay(1000);
    uint8_t send_buf[4];
    unsigned long btn1_pushed_start_time =  0;
@@ -769,8 +770,8 @@ void setup(void)
       touched = touch.tp.touching;
       touch_updated = false;
    } 
-   mlx_loop();
-   vTaskDelay(1);
+   // mlx_loop();
+   vTaskDelay(10);
    }
    vTaskDelete(NULL);
 }
