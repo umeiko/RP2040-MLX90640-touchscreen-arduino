@@ -11,7 +11,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <EEPROM.h>
-
+#include <TJpg_Decoder.h>
 #include "pico/stdlib.h"
 #include "hardware/rtc.h"
 #include "hardware/pll.h"
@@ -30,6 +30,13 @@
 #include "CST816T.h"
 #include "kalman_filter.h"
 #include "BilinearInterpolation.h"
+#include "logo_jpg.h"
+uint16_t  logoBuffer1[16*16]; // Toggle buffer for 16*16 MCU block, 512bytes
+uint16_t  logoBuffer2[16*16]; // Toggle buffer for 16*16 MCU block, 512bytes
+uint16_t* logoBufferPtr = logoBuffer1;
+bool logoBufferSel = 0;
+
+
 
 #define TA_SHIFT 8 //Default shift for MLX90640 in open air
 #define MLX_VDD  11
@@ -132,6 +139,21 @@ TFT_eSPI tft = TFT_eSPI();
 CST816T touch(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, -1);	// sda, scl, rst, irq
 
 int diffx, diffy;
+
+bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap)
+{
+   // Stop further decoding as image is running off bottom of screen
+  if ( y >= tft.height() ) return 0;
+  if (logoBufferSel) logoBufferPtr = logoBuffer2;
+  else logoBufferPtr = logoBuffer1;
+  logoBufferSel = !logoBufferSel; // Toggle buffer selection
+  //  pushImageDMA() will clip the image block at screen boundaries before initiating DMA
+  tft.pushImageDMA(x, y, w, h, bitmap, logoBufferPtr); // Initiate DMA - blocking only if last DMA is not complete
+  // The DMA transfer of image block to the TFT is now in progress...
+  // Return 1 to decode next block.
+  return 1;
+}
+
 
 // ===============================
 // ===== determine the colour ====
@@ -285,7 +307,7 @@ void draw_heat_image(bool re_mapcolor=true){
 
 
 #if defined(DRAW_PIXELS_DMA)
-const int lines = 25;
+const int lines = 5;
 uint16_t  lineBuffer[32 * _SCALE * lines]; // Toggle buffer for lines
 uint16_t  dmaBuffer1[32 * _SCALE * lines]; // Toggle buffer for lines
 uint16_t  dmaBuffer2[32 * _SCALE * lines]; // Toggle buffer for lines
@@ -397,7 +419,7 @@ void mlx_loop(){
          MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
       }
 
-      // mlx90640To[229] = 0.5 * (mlx90640To[228] + mlx90640To[230]);    // eliminate the error-pixels
+      mlx90640To[524] = 0.5 * (mlx90640To[523] + mlx90640To[525]);    // eliminate the error-pixels
       // mlx90640To[428] = 0.5 * (mlx90640To[427] + mlx90640To[429]);    // eliminate the error-pixels
       
       T_min = mlx90640To[0];
@@ -504,26 +526,15 @@ uint32_t dt = millis();
 void screen_setup(){
    tft.setRotation(SCREEN_ROTATION);
    tft.fillScreen(TFT_BLACK);
-   // tft.fillScreen(TFT_GREEN);
-   test_points[0][0] = 120;
-   test_points[0][1] = 110;
-   tft.setTextSize(0);
-   tft.setCursor(25, 220);
-   tft.printf("max: %.2f  ", T_max);
-   tft.setCursor(25, 230);
-   tft.printf("min: %.2f  ", T_min);
-
-   tft.setCursor(105, 220);
-   tft.printf("avg: %.2f  ", T_avg);
-   tft.setCursor(105, 230);
-   tft.printf("bat: %.2f v ", bat_v);
-
-   tft.setCursor(180, 220);
-   tft.printf("bright: %d  ", brightness);
-   tft.setCursor(180, 230);
-   tft.printf("time: %d ", dt);
-   tft.printf("ms     ");
+   TJpgDec.setJpgScale(1);
+   TJpgDec.setCallback(tft_output);
+   uint16_t w = 0, h = 0;
+   TJpgDec.getJpgSize(&w, &h, logo, sizeof(logo));
+   tft.startWrite();
+   TJpgDec.drawJpg(0, 0, logo, sizeof(logo));
+   tft.endWrite();
 }
+
 void screen_loop(){
    if (!freeze){ // 如果画面被暂停会跳过这个热成像图的刷新
    // 只有画面更新才会绘制一张热成像图
@@ -647,6 +658,8 @@ void setup1(void)
    screen_setup();
    vTaskDelay(300);
    smooth_on();
+   vTaskDelay(1500);
+   tft.fillScreen(TFT_BLACK);
 }
 
 void loop1() 
