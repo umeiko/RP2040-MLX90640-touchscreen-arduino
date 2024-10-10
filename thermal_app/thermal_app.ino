@@ -45,6 +45,7 @@
 #define SCREEN_VDD 5
 
 #define SCREEN_ROTATION 1
+#define CURSOR_SIZE 2
 
 // #define DRAW_BLOCKS // 使用方块来绘制热力图
 // #define DRAW_PIXELS  // 使用像素来绘制
@@ -216,6 +217,7 @@ void show_local_temp(int x, int y){
    int shift_x, shift_y;
    if (x<140){shift_x=10;} else {shift_x=-40;}
    if (y<120){shift_y=10;} else {shift_y=-10;}
+   tft.setTextSize(CURSOR_SIZE);
    tft.setCursor(x+shift_x, y+shift_y);
    tft.printf("%.2f", temp_xy);
 }  
@@ -396,6 +398,7 @@ void mlx_loop(){
       }
 
       // mlx90640To[229] = 0.5 * (mlx90640To[228] + mlx90640To[230]);    // eliminate the error-pixels
+      // mlx90640To[428] = 0.5 * (mlx90640To[427] + mlx90640To[429]);    // eliminate the error-pixels
       
       T_min = mlx90640To[0];
       T_max = mlx90640To[0];
@@ -504,6 +507,7 @@ void screen_setup(){
    // tft.fillScreen(TFT_GREEN);
    test_points[0][0] = 120;
    test_points[0][1] = 110;
+   tft.setTextSize(0);
    tft.setCursor(25, 220);
    tft.printf("max: %.2f  ", T_max);
    tft.setCursor(25, 230);
@@ -542,6 +546,7 @@ void screen_loop(){
 
    tft.setRotation(SCREEN_ROTATION);
    tft.setTextColor(TFT_WHITE, TFT_BLACK); 
+   tft.setTextSize(0);
    if (!mlx_is_connected){
       tft.setCursor(25, 110);
       tft.printf("MLX90640 not detected at default I2C address. Please check wiring.");

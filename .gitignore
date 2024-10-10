@@ -1,0 +1,4 @@
+thermal_app/build/
+thermal_app/.vscode/
+build/
+.vscode/
