@@ -26,6 +26,10 @@ inline int min(int a, int b){
     return a < b ? a : b;
 }
 
+inline int max(int a, int b){
+    return a > b ? a : b;
+}
+
 inline float getValue(int y, int x, float *datas){
     return datas[x + (23 - y) * SRC_W];
 }
@@ -53,6 +57,8 @@ inline int bio_linear_interpolation(int dst_x, int dst_y, int *src_data){
     // 确保不超出源图像边界
     src_x1 = min(src_x1, 31);
     src_y1 = min(src_y1, 23);
+    src_x1 = max(src_x1, 0);
+    src_y1 = max(src_y1, 0);
 
     // 计算分数部分
     frac_x = src_x - src_x0 * 1024;
