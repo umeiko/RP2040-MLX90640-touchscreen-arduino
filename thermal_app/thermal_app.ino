@@ -113,6 +113,8 @@ static uint16_t heat_bitmap[32*_SCALE * 24*_SCALE] = {}; // rgb56556形式的内
 #endif
 
 uint16_t test_points[5][2];
+
+
 int brightness = 100;
 
 int R_colour, G_colour, B_colour;            
@@ -132,6 +134,7 @@ bool power_on = true;  // 是否开机
 bool freeze = false;  // 暂停画面
 bool show_local_temp_flag = true;  // 是否显示点测温
 bool clear_local_temp = false;     // 点测温清除
+bool show_crosses = true;  // 是否显示十字线
 
 bool use_upsample = true;  // 是否上采样
 
@@ -240,6 +243,18 @@ void show_local_temp(int x, int y){
    if (x<140){shift_x=10;} else {shift_x=-40;}
    if (y<120){shift_y=10;} else {shift_y=-10;}
    tft.setTextSize(CURSOR_SIZE);
+   tft.setCursor(x+shift_x, y+shift_y);
+   tft.printf("%.2f", temp_xy);
+}  
+
+// 点测温功能
+void show_local_temp(int x, int y, int cursor_size){
+   draw_cross(x, y, 10);
+   float temp_xy = mlx90640To[(24 - y / _SCALE) * 32 + (x / _SCALE)];
+   int shift_x, shift_y;
+   if (x<140){shift_x=10;} else {shift_x=-40;}
+   if (y<120){shift_y=10;} else {shift_y=-10;}
+   tft.setTextSize(cursor_size);
    tft.setCursor(x+shift_x, y+shift_y);
    tft.printf("%.2f", temp_xy);
 }  
@@ -419,8 +434,8 @@ void mlx_loop(){
          MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
       }
 
-      mlx90640To[524] = 0.5 * (mlx90640To[523] + mlx90640To[525]);    // eliminate the error-pixels
-      // mlx90640To[428] = 0.5 * (mlx90640To[427] + mlx90640To[429]);    // eliminate the error-pixels
+      // mlx90640To[524] = 0.5 * (mlx90640To[523] + mlx90640To[525]);    // eliminate the error-pixels
+      // mlx90640To[752] = 0.5 * (mlx90640To[751] + mlx90640To[753]);    // eliminate the error-pixels
       
       T_min = mlx90640To[0];
       T_max = mlx90640To[0];
@@ -552,7 +567,11 @@ void screen_loop(){
    }else{dt = 0;}
 
    tft.setRotation(SCREEN_ROTATION);
-   if (test_points[0][0]==0 && test_points[0][1]==0 ){}else{show_local_temp(test_points[0][0], test_points[0][1]);}
+   if (show_crosses==false){}else{
+      show_local_temp(test_points[0][0], test_points[0][1]);
+      show_local_temp(max_y * _SCALE, (23-max_x) * _SCALE, 0);
+      }
+
    if (clear_local_temp==true) {draw_heat_image(false); clear_local_temp=false;}
 
    tft.setRotation(SCREEN_ROTATION);
@@ -669,6 +688,8 @@ void loop1()
 
 void setup(void)
 {
+   test_points[0][0] = 144;
+   test_points[0][1] = 108;
    pinMode(buttonPin1, INPUT_PULLUP);
    pinMode(BAT_ADC, INPUT);
    // mlx_setup();
@@ -707,8 +728,9 @@ void setup(void)
       }else{
          btn1_pushed_start_time = millis();
          if (btn1_pushed) {  // 短按btn1
-         test_points[0][0] = 0;
-         test_points[0][1] = 0;
+         show_crosses = !show_crosses;
+         // test_points[0][0] = 0;
+         // test_points[0][1] = 0;
          if (freeze==true){ clear_local_temp=true; }
          }
          btn1_pushed=false;
@@ -774,10 +796,10 @@ void setup(void)
          touch_pushed_start_time = millis();
          if (touched==true){  // 上升沿
             if (start_br == brightness){
-               if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
+               if (y < 216){show_crosses=true; test_points[0][0] = x; test_points[0][1] = y;}
             }
             if (long_pushed==false){  // 短按时
-               if (y < 216){test_points[0][0] = x; test_points[0][1] = y;}
+               if (y < 216){show_crosses=true; test_points[0][0] = x; test_points[0][1] = y;}
             }
             start_br = brightness;
             EEPROM.write(1, brightness);
