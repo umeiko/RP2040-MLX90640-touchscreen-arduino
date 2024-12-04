@@ -36,7 +36,7 @@ uint16_t  logoBuffer2[16*16]; // Toggle buffer for 16*16 MCU block, 512bytes
 uint16_t* logoBufferPtr = logoBuffer1;
 bool logoBufferSel = 0;
 
-
+#define MXL_STARTUP_DELAY 3500
 
 #define TA_SHIFT 8 //Default shift for MLX90640 in open air
 #define MLX_VDD  11
@@ -58,7 +58,7 @@ bool logoBufferSel = 0;
 // #define DRAW_PIXELS  // 使用像素来绘制
 #define DRAW_PIXELS_DMA  // 使用DMA来绘制
 
-#define KALMAN  // 使用 卡尔曼滤波器
+#define KALMAN  // 使用 卡尔曼滤波器s
 // #define SERIAL1_DEBUG  
 
 
@@ -382,8 +382,8 @@ int mlx_setup(){
    digitalWrite(MLX_VDD, LOW);
    Wire.setSDA(MLX_SDA);
    Wire.setSCL(MLX_SCL);
+   vTaskDelay(MXL_STARTUP_DELAY);
    Wire.begin(); 
-   vTaskDelay(500);
    Wire.setClock(800000); //Increase I2C clock speed to 800kHz
    Serial1.println("MLX90640 IR Array Example");
    mlx_is_connected = isConnected();
@@ -405,8 +405,8 @@ int mlx_setup(){
       Serial1.print(" status = ");
       Serial1.println(status);
    }
-   MLX90640_SetRefreshRate(MLX90640_address, 0x04); //Set rate to 4Hz effective - Works
-   // MLX90640_I2CWrite(0x33, 0x800D, 6401);    // writes the value 1901 (HEX) = 6401 (DEC) in the register at position 0x800D to enable reading out the temperatures!!!
+   // MLX90640_SetRefreshRate(MLX90640_address, 0x04); //Set rate to 4Hz effective - Works
+   MLX90640_I2CWrite(0x33, 0x800D, 6401);    // writes the value 1901 (HEX) = 6401 (DEC) in the register at position 0x800D to enable reading out the temperatures!!!
    MLX90640_SetRefreshRate(MLX90640_address, 0x05); //Set rate to 8Hz effective - Works at 800kHz
    return 0;
 }
@@ -434,7 +434,7 @@ void mlx_loop(){
          MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
       }
 
-      // mlx90640To[524] = 0.5 * (mlx90640To[523] + mlx90640To[525]);    // eliminate the error-pixels
+      // mlx90640To[719] = 0.5 * (mlx90640To[718] + mlx90640To[720]);    // eliminate the error-pixels
       // mlx90640To[752] = 0.5 * (mlx90640To[751] + mlx90640To[753]);    // eliminate the error-pixels
       
       T_min = mlx90640To[0];
@@ -559,9 +559,9 @@ void screen_loop(){
       vTaskDelay(1);
    }
    for (int i = 0; i < 768; i++) {
-      // mlx90640To_buffer[i] = mlx90640To[i];
+      // 拷贝温度信息, 并提前映射到色彩空间中
       mlx90640To_buffer[i] = (int)(180.0 * (mlx90640To[i] - T_min) / (T_max - T_min));
-   }  // 拷贝温度信息
+   }  
    draw_heat_image();
    dt = millis() - dt;
    }else{dt = 0;}
@@ -569,8 +569,8 @@ void screen_loop(){
    tft.setRotation(SCREEN_ROTATION);
    if (show_crosses==false){}else{
       show_local_temp(test_points[0][0], test_points[0][1]);
-      show_local_temp(max_y * _SCALE, (23-max_x) * _SCALE, 0);
-      }
+      if (!freeze) {show_local_temp(max_y * _SCALE, (23-max_x) * _SCALE, 0);}
+   }
 
    if (clear_local_temp==true) {draw_heat_image(false); clear_local_temp=false;}
 
@@ -729,8 +729,6 @@ void setup(void)
          btn1_pushed_start_time = millis();
          if (btn1_pushed) {  // 短按btn1
          show_crosses = !show_crosses;
-         // test_points[0][0] = 0;
-         // test_points[0][1] = 0;
          if (freeze==true){ clear_local_temp=true; }
          }
          btn1_pushed=false;
