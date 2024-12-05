@@ -25,12 +25,13 @@
 #include "hardware/structs/scb.h"
 
 
-#include "MLX90640_API.h"
-#include "MLX90640_I2C_Driver.h"
+\
 #include "CST816T.h"
 #include "kalman_filter.h"
 #include "BilinearInterpolation.h"
 #include "logo_jpg.h"
+#include "def.h"
+
 uint16_t  logoBuffer1[16*16]; // Toggle buffer for 16*16 MCU block, 512bytes
 uint16_t  logoBuffer2[16*16]; // Toggle buffer for 16*16 MCU block, 512bytes
 uint16_t* logoBufferPtr = logoBuffer1;
@@ -68,11 +69,11 @@ const static float init_P = 0.1;
 const static float init_G = 0.0;
 const static float init_O = 26;
 
-static KFPTypeS kfpVar3Array[768];  // 卡尔曼滤波器变量数组
+static KFPTypeS kfpVar3Array[1024];  // 卡尔曼滤波器变量数组
 // 初始化卡尔曼滤波器数组的函数
 void KalmanArrayInit() {
     // 循环遍历数组中的每个元素
-    for (int i = 0; i < 768; ++i) {
+    for (int i = 0; i < 1024; ++i) {
         // 初始化每个元素
         kfpVar3Array[i] = (KFPTypeS){
          init_P,     //估算协方差. 初始化值为 0.02
@@ -98,15 +99,11 @@ const int buttonPin2 = -1;
 bool buttonState1 = 1;  
 bool buttonState2 = 1;  
 
-const byte MLX90640_address = 0x33;
-static float mlx90640To[768];              // 从MLX90640读取的温度数据
-static int mlx90640To_buffer[768];       // 缓存区域，复制MLX90640读取的温度数据并用于绘制热力图
-static float mlx90640To_send_buffer[768];  // 缓存区域，复制MLX90640读取的温度数据，用于发送到上位机
-static uint8_t* mlx90640To_Serial_buffer = (uint8_t*)mlx90640To_send_buffer;  
+static float ThrmalMatrix[32*32];              // 从MLX90640读取的温度数据
+static int ThrmalMatrix_buffer[32*32];       // 缓存区域，复制MLX90640读取的温度数据并用于绘制热力图
+static float ThrmalMatrix_send_buffer[32*32];  // 缓存区域，复制MLX90640读取的温度数据，用于发送到上位机
+static uint8_t* mlx90640To_Serial_buffer = (uint8_t*)ThrmalMatrix_send_buffer;  
 
-
-
-paramsMLX90640 mlx90640;
 
 #if defined(DRAW_PIXELS)
 static uint16_t heat_bitmap[32*_SCALE * 24*_SCALE] = {}; // rgb56556形式的内存，用于存储要渲染的图像
@@ -224,7 +221,7 @@ boolean isConnected()
     Wire.beginTransmission((uint8_t)MLX90640_address);
     if (Wire.endTransmission() != 0){return (false);}
     return (true);
-   }   
+}   
 
 // 绘制十字
 void draw_cross(int x, int y, int len){
@@ -238,7 +235,7 @@ void draw_cross(int x, int y, int len){
 // 点测温功能
 void show_local_temp(int x, int y){
    draw_cross(x, y, 10);
-   float temp_xy = mlx90640To[(24 - y / _SCALE) * 32 + (x / _SCALE)];
+   float temp_xy = ThrmalMatrix[(32 - y / _SCALE) * 32 + (x / _SCALE)];
    int shift_x, shift_y;
    if (x<140){shift_x=10;} else {shift_x=-40;}
    if (y<120){shift_y=10;} else {shift_y=-10;}
@@ -250,7 +247,7 @@ void show_local_temp(int x, int y){
 // 点测温功能
 void show_local_temp(int x, int y, int cursor_size){
    draw_cross(x, y, 10);
-   float temp_xy = mlx90640To[(24 - y / _SCALE) * 32 + (x / _SCALE)];
+   float temp_xy = ThrmalMatrix[(32 - y / _SCALE) * 32 + (x / _SCALE)];
    int shift_x, shift_y;
    if (x<140){shift_x=10;} else {shift_x=-40;}
    if (y<120){shift_y=10;} else {shift_y=-10;}
@@ -335,9 +332,9 @@ void draw_heat_image(bool re_mapcolor=true){
    tft.setRotation(SCREEN_ROTATION);
    if(use_upsample){
       tft.startWrite();
-      for(int y=0; y<24 * _SCALE; y++){ 
+      for(int y=0; y<32 * _SCALE; y++){ 
          for(int x=0; x<32 * _SCALE; x++){
-            value = bio_linear_interpolation(x, y, mlx90640To_buffer);
+            value = bio_linear_interpolation(x, y, ThrmalMatrix_buffer);
             getColour(value);
             lineBuffer[x + now_y*32 * _SCALE] = tft.color565(R_colour, G_colour, B_colour);
          }
@@ -356,18 +353,18 @@ void draw_heat_image(bool re_mapcolor=true){
          else dmaBufferPtr = dmaBuffer1;
          dmaBufferSel = !dmaBufferSel; // Toggle buffer selection
          // tft.startWrite();
-         tft.pushImageDMA(0, 24*_SCALE-1-now_y, 32*_SCALE, now_y, lineBuffer, dmaBufferPtr);
+         tft.pushImageDMA(0, 32*_SCALE-1-now_y, 32*_SCALE, now_y, lineBuffer, dmaBufferPtr);
          // tft.endWrite();
          now_y = 0;
       }
       tft.endWrite();
    }else{
       tft.setRotation(3);
-      for (int i = 0 ; i < 24 ; i++){
+      for (int i = 0 ; i < 32 ; i++){
       for (int j = 0; j < 32; j++){
          // if (re_mapcolor) {mlx90640To_buffer[i*32 + j] = 180.0 * (mlx90640To_buffer[i*32 + j] - T_min) / (T_max - T_min);}
-         getColour(mlx90640To_buffer[i*32 + j]);
-         tft.fillRect(280 - j * _SCALE, (240 - _SCALE * 24) + i * _SCALE, _SCALE, _SCALE, tft.color565(R_colour, G_colour, B_colour));  
+         getColour(ThrmalMatrix_buffer[i*32 + j]);
+         tft.fillRect(280 - j * _SCALE, (240 - _SCALE * 32) + i * _SCALE, _SCALE, _SCALE, tft.color565(R_colour, G_colour, B_colour));  
       }
       }
    }
@@ -431,40 +428,40 @@ void mlx_loop(){
          float Ta = MLX90640_GetTa(mlx90640Frame, &mlx90640);
          float tr = Ta - TA_SHIFT; //Reflected temperature based on the sensor ambient temperature
          float emissivity = 0.95;
-         MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, mlx90640To);
+         MLX90640_CalculateTo(mlx90640Frame, &mlx90640, emissivity, tr, ThrmalMatrix);
       }
 
       // mlx90640To[719] = 0.5 * (mlx90640To[718] + mlx90640To[720]);    // eliminate the error-pixels
       // mlx90640To[752] = 0.5 * (mlx90640To[751] + mlx90640To[753]);    // eliminate the error-pixels
       
-      T_min = mlx90640To[0];
-      T_max = mlx90640To[0];
-      T_avg = mlx90640To[0];
+      T_min = ThrmalMatrix[0];
+      T_max = ThrmalMatrix[0];
+      T_avg = ThrmalMatrix[0];
       for (int i = 1; i < 768; i++){
-         if((mlx90640To[i] > -41) && (mlx90640To[i] < 301))
+         if((ThrmalMatrix[i] > -41) && (ThrmalMatrix[i] < 301))
             {
-               if(mlx90640To[i] < T_min)
+               if(ThrmalMatrix[i] < T_min)
                   {
-                  T_min = mlx90640To[i];
+                  T_min = ThrmalMatrix[i];
                   }
 
-               if(mlx90640To[i] > T_max)
+               if(ThrmalMatrix[i] > T_max)
                   {
-                  T_max = mlx90640To[i];
+                  T_max = ThrmalMatrix[i];
                   max_x = i / 32;
                   max_y = i % 32;
                   }
             #if defined(KALMAN)
-            mlx90640To[i] = KalmanFilter(&kfpVar3Array[i], mlx90640To[i]);
+            ThrmalMatrix[i] = KalmanFilter(&kfpVar3Array[i], ThrmalMatrix[i]);
             #endif
             }
          else if(i > 0){
-               mlx90640To[i] = mlx90640To[i-1];
+               ThrmalMatrix[i] = ThrmalMatrix[i-1];
             }
          else{
-                mlx90640To[i] = mlx90640To[i+1];
+                ThrmalMatrix[i] = ThrmalMatrix[i+1];
             }
-            T_avg = T_avg + mlx90640To[i];
+            T_avg = T_avg + ThrmalMatrix[i];
          }
       T_avg = T_avg / 768;
       #if defined(KALMAN)
@@ -530,13 +527,6 @@ void smooth_on(){
    }
 }
 
-// 平滑的开机
-void task_smooth_on(void * ptr){
-   smooth_on();
-   vTaskDelete(NULL); 
-}
-
-
 uint32_t dt = millis();
 void screen_setup(){
    tft.setRotation(SCREEN_ROTATION);
@@ -560,7 +550,7 @@ void screen_loop(){
    }
    for (int i = 0; i < 768; i++) {
       // 拷贝温度信息, 并提前映射到色彩空间中
-      mlx90640To_buffer[i] = (int)(180.0 * (mlx90640To[i] - T_min) / (T_max - T_min));
+      ThrmalMatrix_buffer[i] = (int)(180.0 * (ThrmalMatrix[i] - T_min) / (T_max - T_min));
    }  
    draw_heat_image();
    dt = millis() - dt;
@@ -599,13 +589,6 @@ void screen_loop(){
    // vTaskDelay(10);
 }
 
-void task_screen_draw(void * ptr){
-   screen_setup();
-   for(;power_on==true;){
-      screen_loop();
-   }
-   vTaskDelete(NULL);
-}
 
 // 通过串口传输单个浮点数据
 void send_float_as_uint8(float f, uint8_t *buf) {
@@ -618,31 +601,6 @@ void send_to_serial() {
    // memcpy(mlx90640To_Serial_buffer, mlx90640To_send_buffer, 768 * sizeof(float));
    Serial.write(mlx90640To_Serial_buffer, 768 * sizeof(float));
 }
-
-void task_serial_communicate(void * ptr){
-   vTaskDelay(3000);
-   uint8_t send_buf[4];
-
-   for(;power_on==true;){
-      // 拷贝温度信息
-      while (lock == true) {vTaskDelay(1);}
-      memcpy(mlx90640To_send_buffer, mlx90640To, 768 * sizeof(float));
-      // for (int i = 0; i < 768; i++) {mlx90640To_send_buffer[i] = mlx90640To[i];} 
-      Serial.print("BEGIN");
-      send_float_as_uint8(T_max, send_buf);
-      send_float_as_uint8(T_min, send_buf);
-      send_float_as_uint8(T_avg, send_buf);
-      // for (int i = 0; i < 768; i++){
-      //    send_float_as_uint8(mlx90640To_send_buffer[i], send_buf);
-      //    if(i % 5==0){vTaskDelay(1);}
-      // }
-      send_to_serial();
-      Serial.print("END");
-      vTaskDelay(30);
-   }
-   vTaskDelete(NULL);
-}
-
 
 
 void setup1(void)
@@ -663,14 +621,10 @@ void setup1(void)
    KalmanArrayInit();
    #endif
    touch.begin();
-//  mlx_setup();
-   // 按钮启用
    pinMode(SCREEN_BL_PIN, OUTPUT);
    digitalWrite(SCREEN_BL_PIN, LOW);
    pinMode(SCREEN_VDD, OUTPUT);
    digitalWrite(SCREEN_VDD, LOW);
-   // xTaskCreate(task_mlx, "MLX_FLASHING", 1024 * 4, NULL, 1, NULL);
-//  xTaskCreate(task_bat, "BAT_MANAGER", 1024 * 2, NULL, 3, NULL);
    tft.init();
    tft.setSwapBytes(true);
    tft.initDMA();
@@ -759,7 +713,7 @@ void setup(void)
       buttonState2 = digitalRead(buttonPin1);
    
       while (lock == true) {vTaskDelay(1);}
-      memcpy(mlx90640To_send_buffer, mlx90640To, 768 * sizeof(float));
+      memcpy(ThrmalMatrix_send_buffer, ThrmalMatrix, 768 * sizeof(float));
       // for (int i = 0; i < 768; i++) {mlx90640To_send_buffer[i] = mlx90640To[i];} 
       Serial.print("BEGIN");
       send_float_as_uint8(T_max, send_buf);
